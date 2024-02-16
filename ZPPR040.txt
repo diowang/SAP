@@ -1,0 +1,1215 @@
+
+*&---------------------------------------------------------------------*
+*& Report  ZPPR040
+*& T-code  ZPPR040
+*& Description:Customer Week FCST upload PIR BY Material while period change or create
+*&---------------------------------------------------------------------
+*& Creat On  Author       Requestor  Request No#      Copy from
+*&---------  ----------   ---------  --------------   ----------
+*& 20200320  CPT2607      Xiaoxue                     ZPPR020
+*& input form: XLS form PC A PLAN SCHEDULE FILE
+*& output from: ALV
+*& Logical rule : LO WEEKS FCST NET SHIPMENT FROM ZSDR043 THEN USING
+*& This tcode to upload PIR ,old data clear, NEW Material is crated
+*&---------------------------------------------------------------------*
+*& Modified On  Author    Requestor  Request No#
+*& -----------  --------  ---------  -----------
+*& 20220228     Su-Xiaoxue 1.check md62 qty gt 0 release not check
+*&                         2.EXCEL HANDER Can put yyyyww or yyyy/mm xxxx
+*& for weekly or monthly FCST UPLOAD
+*& 20220316     Su-Xiaoxue second time issue on zppr020 check problem.
+*& current monthly fcst order start date must system date.
+*&---------------------------------------------------------------------*
+
+
+REPORT  zppr040 MESSAGE-ID zpp
+                                 LINE-SIZE 132
+                                 LINE-COUNT 65.
+TYPE-POOLS: slis,
+            icon,
+            sym.
+DATA:
+         alv_layout             TYPE slis_layout_alv,
+         gt_fieldcat            TYPE slis_t_fieldcat_alv,
+         g_user_command         TYPE slis_formname VALUE 'USER_COMMAND',
+         gt_sort                TYPE slis_t_sortinfo_alv,
+         g_repid                LIKE sy-repid,
+         g_save(1)              TYPE c,
+         g_title                TYPE lvc_title,
+         stru_disvar            TYPE disvariant,
+         gt_events              TYPE slis_t_event,
+*         GT_LIST_TOP_OF_PAGE    TYPE SLIS_T_LISTHEADER,
+          g_pf_status            TYPE slis_formname VALUE 'PF_STATUS_SET'.
+*         G_TOP_OF_PAGE          TYPE SLIS_FORMNAME VALUE 'TOP_OF_PAGE',
+*         G_TOP_OF_LIST          TYPE SLIS_FORMNAME VALUE 'TOP_OF_LIST',
+*         G_END_OF_LIST          TYPE SLIS_FORMNAME VALUE 'END_OF_LIST'.
+DATA: $subrc LIKE sy-subrc,
+      r_ucomm  LIKE sy-ucomm.
+TABLES: mara,pbim,ztsd40.
+
+
+DATA: iztsd40s LIKE ztsd40.
+DATA: w_excel_tab TYPE alsmex_tabline OCCURS 0 WITH HEADER LINE,
+      w_matnr TYPE matnr.
+
+DATA: BEGIN OF col_weeks OCCURS 0,
+        colpos  TYPE i,
+        yyyyww  TYPE scal-week,
+        fstdat  TYPE scal-date,
+        cflgwm(1)  TYPE c, "20220228 SU  W=YYYYWW M=YYYYMM
+      END OF col_weeks.
+DATA: wcol_weeks LIKE col_weeks OCCURS 0 WITH HEADER LINE.
+
+DATA: BEGIN OF w_input_tab OCCURS 0,
+        matnr   TYPE matnr,
+        yyyyww  TYPE scal-week,
+        fstdat  TYPE scal-date,
+        weekqty TYPE  plnmg,
+        werks   TYPE werks_ext,
+        req_type TYPE bedae,
+        unit     TYPE meins,
+        oyyyyww  TYPE scal-week,
+        ofstdat  TYPE scal-date,
+        oweekqty TYPE plnmg,
+        orqentmg TYPE entmg,
+        ounit    TYPE meins,
+        oentlu   TYPE entlu,
+        pbdnr    TYPE pbdnr,
+        zifcdat  LIKE ztsd40-zifcdat,
+        flgmssg(80) TYPE c,
+        flag TYPE c,     "before update
+        flag2 TYPE c,    "after update
+        req_mod  TYPE c, "20200320 A-ADD , Blank modify for requirment schedle line update mode
+        cflgwm(1) TYPE c,  "20220228 SU FOR WEEKLY OR MONTHLY FCST
+      END OF w_input_tab.
+DATA: w_input_tab1 LIKE w_input_tab OCCURS 0 WITH HEADER LINE.
+DATA: w_input_tab2 LIKE w_input_tab OCCURS 0 WITH HEADER LINE.
+DATA: w_input_tab3 LIKE w_input_tab OCCURS 0 WITH HEADER LINE."202202028 su +
+DATA: w_output_tab LIKE w_input_tab OCCURS 0 WITH HEADER LINE.
+
+
+DATA: w_bapi_item LIKE bapisitemr,
+      requirements_out LIKE bapisitmeo OCCURS 0 WITH HEADER LINE,
+      req_weekpdwmnth LIKE bapisitmeo OCCURS 0 WITH HEADER LINE,
+      return LIKE bapireturn1 OCCURS 0 WITH HEADER LINE,
+      requirements_schedule_in LIKE bapisshdin OCCURS 0 WITH HEADER LINE,
+      t_cals LIKE vtbfcal OCCURS 0 WITH HEADER LINE,
+      rows TYPE i,
+      colpos TYPE i,
+      w_len TYPE i,
+      w_off LIKE w_len,
+      w_cend LIKE w_len.
+
+DATA: BEGIN OF req_outvalid OCCURS 0.
+        INCLUDE STRUCTURE requirements_out.
+DATA: yyyyww TYPE scal-week.
+DATA:  END OF req_outvalid.
+
+DATA: BEGIN OF wa_rejections,
+        matnr LIKE mara-matnr,
+        comment(80) TYPE c,
+      END OF wa_rejections.
+
+
+DATA: w_flgmssg  LIKE w_input_tab-flgmssg,
+      w_flag     LIKE w_input_tab-flag,
+      w_fstdats  LIKE sy-datum,
+      w_fstdatl  LIKE sy-datum,
+      w_unit     LIKE mara-meins,
+*20220228 su +
+      w_yyyy     TYPE gjahr,
+      w_month    TYPE am_monat,
+      w_text(20) TYPE c.
+DATA: w_t247 LIKE t247 OCCURS 0 WITH HEADER LINE.
+
+
+
+************************************************************************
+*                      SELECTION-SCREEN DEFINITION                     *
+************************************************************************
+SELECTION-SCREEN BEGIN OF BLOCK s01 WITH FRAME TITLE text-s01.
+SELECTION-SCREEN SKIP.
+*
+SELECTION-SCREEN BEGIN OF LINE.
+SELECTION-SCREEN POSITION 3.
+SELECTION-SCREEN COMMENT (20) text-003.
+SELECTION-SCREEN POSITION 30.
+PARAMETERS p_bedae LIKE pbid-bedae  DEFAULT 'LSF' OBLIGATORY .
+SELECTION-SCREEN END OF LINE.
+*
+SELECTION-SCREEN BEGIN OF LINE.
+SELECTION-SCREEN POSITION 3.
+SELECTION-SCREEN COMMENT (20) text-004.
+SELECTION-SCREEN POSITION 30.
+PARAMETERS p_versb LIKE pbid-versb DEFAULT '00' OBLIGATORY.
+SELECTION-SCREEN END OF LINE.
+*
+SELECTION-SCREEN BEGIN OF LINE.
+SELECTION-SCREEN POSITION 3.
+SELECTION-SCREEN COMMENT (25) text-014.
+SELECTION-SCREEN POSITION 30.
+*PARAMETERS p_entlu LIKE pbed-entlu DEFAULT '2' OBLIGATORY .
+PARAMETERS p_entlu LIKE pbed-entlu DEFAULT '2' NO-DISPLAY.
+SELECTION-SCREEN END OF LINE.
+*
+SELECTION-SCREEN BEGIN OF LINE.
+SELECTION-SCREEN POSITION 3.
+SELECTION-SCREEN COMMENT (20) text-010.
+SELECTION-SCREEN POSITION 30.
+PARAMETERS p_pbdnr LIKE pbim-pbdnr DEFAULT '*' OBLIGATORY.
+SELECTION-SCREEN END OF LINE.
+SELECTION-SCREEN SKIP.
+SELECTION-SCREEN END OF BLOCK s01.
+*
+SELECTION-SCREEN BEGIN OF BLOCK s02 WITH FRAME TITLE text-s02.
+SELECTION-SCREEN SKIP.
+*
+SELECTION-SCREEN BEGIN OF LINE.
+SELECTION-SCREEN POSITION 3.
+SELECTION-SCREEN COMMENT (20) text-002.
+SELECTION-SCREEN POSITION 30.
+PARAMETERS p_werks LIKE mard-werks DEFAULT '0112' OBLIGATORY.
+SELECTION-SCREEN END OF LINE.
+*
+SELECTION-SCREEN BEGIN OF LINE.
+SELECTION-SCREEN POSITION 3.
+SELECTION-SCREEN COMMENT (20) text-005.
+SELECTION-SCREEN POSITION 30.
+PARAMETERS p_ident LIKE tfacs-ident DEFAULT 'CN' OBLIGATORY.
+SELECTION-SCREEN END OF LINE.
+
+SELECTION-SCREEN BEGIN OF LINE.
+SELECTION-SCREEN POSITION 3.
+SELECTION-SCREEN COMMENT (25) text-012.
+SELECTION-SCREEN POSITION 30.
+PARAMETERS p_ifcdat LIKE ztsd40-zifcdat. "obligatory.
+
+SELECTION-SCREEN END OF LINE.
+*
+SELECTION-SCREEN BEGIN OF LINE.
+SELECTION-SCREEN POSITION 3.
+SELECTION-SCREEN COMMENT (25) text-006.
+SELECTION-SCREEN POSITION 30.
+PARAMETERS p_file TYPE localfile." OBLIGATORY.
+SELECTION-SCREEN END OF LINE.
+
+SELECTION-SCREEN SKIP.
+SELECTION-SCREEN END OF BLOCK s02.
+************************************************************************
+*                         INITIALIZATION                               *
+************************************************************************
+INITIALIZATION.
+  LOOP AT SCREEN .
+    IF screen-name = 'P_BEDAE'.
+      screen-input = '0'.
+      MODIFY SCREEN .
+    ENDIF.
+    IF screen-name = 'P_VERSB'.
+      screen-input = '0'.
+      MODIFY SCREEN .
+    ENDIF.
+    IF screen-name = 'P_ENTLU'.
+      screen-input = '0'.
+      MODIFY SCREEN .
+    ENDIF.
+    IF screen-name = 'P_PBDNR'.
+      screen-input = '0'.
+      MODIFY SCREEN .
+    ENDIF.
+  ENDLOOP.
+
+AT SELECTION-SCREEN OUTPUT.
+  LOOP AT SCREEN .
+    IF screen-name = 'P_BEDAE'.
+      screen-input = '0'.
+      MODIFY SCREEN .
+    ENDIF.
+    IF screen-name = 'P_VERSB'.
+      screen-input = '0'.
+      MODIFY SCREEN .
+    ENDIF.
+    IF screen-name = 'P_ENTLU'.
+      screen-input = '0'.
+      MODIFY SCREEN .
+    ENDIF.
+    IF screen-name = 'P_PBDNR'.
+      screen-input = '0'.
+      MODIFY SCREEN .
+    ENDIF.
+  ENDLOOP.
+************************************************************************
+*                   SELECTION-SCREEN VALIDATION                        *
+************************************************************************
+AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_file.
+*
+  CALL FUNCTION 'WS_FILENAME_GET'
+    EXPORTING
+*   DEF_FILENAME           = ' '
+*   DEF_PATH               = ' '
+      mask                   = ',*.xls*.'
+      mode                   = 'O'
+*   TITLE                  = ' '
+    IMPORTING
+      filename               = p_file
+*   RC                     =
+    EXCEPTIONS
+      inv_winsys             = 1
+      no_batch               = 2
+      selection_cancel       = 3
+      selection_error        = 4
+      OTHERS                 = 5
+            .
+  IF sy-subrc <> 0.
+    CHECK NOT sy-subrc EQ 3.
+    MESSAGE e999 WITH 'Problem selecting file'.
+  ENDIF.
+** Check Input Data (PAI)
+
+AT SELECTION-SCREEN ON p_ifcdat.
+
+  PERFORM check_fcst_version_number.
+
+
+************************************************************************
+*                      START OF SELECTION                              *
+************************************************************************
+START-OF-SELECTION.
+*calender id
+  t_cals-ident = p_ident.
+  APPEND t_cals.
+  CLEAR t_cals.
+
+  CALL FUNCTION 'ALSM_EXCEL_TO_INTERNAL_TABLE'
+    EXPORTING
+      filename                = p_file
+      i_begin_col             = 1
+      i_begin_row             = 1
+      i_end_col               = 30 "w_cend
+      i_end_row               = 300" p_fend
+    TABLES
+      intern                  = w_excel_tab
+    EXCEPTIONS
+      inconsistent_parameters = 1
+      upload_ole              = 2
+      OTHERS                  = 3.
+  IF sy-subrc <> 0.
+    MESSAGE ID sy-msgid TYPE sy-msgty NUMBER sy-msgno
+            WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+  ENDIF.
+*20220228 su +
+  SELECT *
+    INTO TABLE w_t247
+    FROM t247
+    WHERE spras = sy-langu.
+* Re-format input file in order to use it effectively.
+  SORT w_excel_tab BY row col.
+  colpos = 2.
+* Read headers and translate them into number weeks.
+  LOOP AT w_excel_tab WHERE row = 1.
+
+    CHECK w_excel_tab-col EQ colpos.
+*20220228 sU M For excel hander format yyyymm or YYYYMM XXXXX
+    IF STRLEN( w_excel_tab-value ) = 6.
+
+      MOVE w_excel_tab-value  TO col_weeks-yyyyww.
+      PERFORM weekfirstdate_get USING col_weeks-yyyyww
+                                CHANGING  col_weeks-fstdat
+                                          w_fstdatl.
+      MOVE colpos TO col_weeks-colpos.
+      MOVE 'W' TO col_weeks-cflgwm.
+    ELSE .
+      SPLIT w_excel_tab-value AT '/'
+      INTO  w_yyyy w_text .
+      w_month = w_text+0(2).
+
+      READ TABLE w_t247 WITH KEY mnr = w_month.
+
+      IF sy-subrc EQ 0.
+        CONCATENATE w_yyyy w_month INTO col_weeks-yyyyww.
+        MOVE 'M' TO col_weeks-cflgwm.
+        PERFORM monthfirstdate_get USING col_weeks-yyyyww
+                                   CHANGING col_weeks-fstdat.
+      ELSE.
+        MOVE 'E' TO col_weeks-cflgwm.
+      ENDIF.
+      MOVE colpos TO col_weeks-colpos.
+    ENDIF.
+    APPEND col_weeks.
+    CLEAR col_weeks.
+    colpos = colpos + 1.
+  ENDLOOP.
+
+
+**Excel header delection.
+  DELETE w_excel_tab WHERE row = 1.
+
+  LOOP AT col_weeks.
+    IF col_weeks-fstdat NE '00000000'.
+
+      MOVE col_weeks-fstdat TO w_fstdats.
+      EXIT.
+    ENDIF.
+  ENDLOOP.
+
+**Excel item material with week qty  process
+  LOOP AT w_excel_tab.
+    CASE w_excel_tab-col.
+      WHEN 1. "Material
+        CLEAR: w_flgmssg, w_flag, w_matnr, w_unit.
+        MOVE w_excel_tab-value TO w_matnr.
+*CHECK Material has exist on pir
+        PERFORM requirmentgetdetail USING w_matnr
+                                          p_werks
+                                          p_bedae
+                                          p_versb
+                                          p_pbdnr
+                                          w_fstdats
+                                          w_fstdatl
+                                    CHANGING w_flag
+                                             w_flgmssg.
+
+
+        SELECT SINGLE meins INTO w_unit FROM mara WHERE matnr EQ w_matnr .
+      WHEN OTHERS. "PIR QTY
+*20200320 all requirment must upload
+        CLEAR : w_flag.
+        MOVE w_flag TO w_input_tab-flag.
+        MOVE w_flgmssg TO w_input_tab-flgmssg.
+        MOVE w_matnr  TO w_input_tab-matnr.
+        MOVE: p_werks  TO w_input_tab-werks,
+              p_bedae  TO w_input_tab-req_type,
+*             p_vrsio  TO w_input_tab-vrsio,   "20200320 su M
+              p_ifcdat TO w_input_tab-zifcdat,
+              p_pbdnr  TO w_input_tab-pbdnr,
+              w_unit   TO w_input_tab-unit.
+*check with header has number of week.
+        READ TABLE col_weeks WITH KEY colpos = w_excel_tab-col.
+        IF sy-subrc EQ 0.
+          MOVE col_weeks-yyyyww TO w_input_tab-yyyyww.
+          MOVE col_weeks-fstdat TO w_input_tab-fstdat.
+*20220228 su +
+          MOVE col_weeks-cflgwm TO w_input_tab-cflgwm.
+          CONDENSE w_excel_tab-value NO-GAPS.
+          IF w_excel_tab-value IS INITIAL."DEFAUL ZERO.
+            MOVE 0 TO w_input_tab-weekqty.
+          ELSE.
+            MOVE w_excel_tab-value TO w_input_tab-weekqty.
+          ENDIF.
+*NUMBER WEEK IS NON WORKING WEEK AND WEEKQTY GT 0  , WRITING TO ERROR
+          IF w_input_tab-fstdat = '00000000' AND w_input_tab-weekqty GT 0 AND  w_flag IS INITIAL.
+            MOVE : text-990 TO w_input_tab-flgmssg,
+                   'X'     TO w_input_tab-flag .
+          ENDIF.
+*20220228 Su + EXCEL HEADER LINE ERROR
+          IF w_input_tab-cflgwm EQ 'E'.
+            MOVE : text-983 TO w_input_tab-flgmssg,
+                   'X'      TO w_input_tab-flag.
+          ENDIF.
+**check requirement date must GEATER AND EQUAL  F/C Version start month 2018/01/22
+*          IF w_input_tab-fstdat+0(6) LT s_ztpp08-spmon AND w_input_tab-weekqty NE 0.
+*            MOVE: text-985 TO w_input_tab-flgmssg,
+*                  'X'    TO w_input_tab-flag.
+*          ENDIF.
+          APPEND w_input_tab.
+          CLEAR w_input_tab.
+        ENDIF.
+    ENDCASE.
+  ENDLOOP.
+**
+  FREE w_excel_tab.
+
+
+* SORT w_input_tab BY matnr yyyyww.
+*PIR Match excel record or non match records in week of period data input to tab1
+  SORT w_input_tab BY matnr yyyyww fstdat.
+  LOOP AT req_outvalid.
+
+*OLD requirment IN PIR CHECK EXCEL FILE NEW PIR DATA
+*   IF req_outvalid-req_date GE w_fstdats AND req_outvalid-req_date LE w_fstdatl.
+*    IF req_outvalid-date_type EQ p_entlu.
+    READ TABLE w_input_tab WITH KEY matnr = req_outvalid-material
+                                    yyyyww = req_outvalid-yyyyww
+                                    fstdat = req_outvalid-req_date BINARY SEARCH.
+
+    IF sy-subrc EQ 0.
+      MOVE-CORRESPONDING w_input_tab TO w_input_tab1.
+      MOVE : req_outvalid-yyyyww TO w_input_tab1-oyyyyww,
+             req_outvalid-req_qty TO w_input_tab1-oweekqty,
+             req_outvalid-req_date TO w_input_tab1-ofstdat,
+             req_outvalid-req_withdr_qty TO w_input_tab1-orqentmg,
+             req_outvalid-unit     TO w_input_tab1-ounit,
+             req_outvalid-date_type TO w_input_tab1-oentlu.
+      MOVE : 'M' TO  w_input_tab1-req_mod.
+      APPEND w_input_tab1.
+
+    ELSE.
+      CLEAR w_input_tab1.
+      MOVE : req_outvalid-material  TO w_input_tab1-matnr,
+             req_outvalid-req_number  TO w_input_tab1-pbdnr,
+             p_ifcdat  TO w_input_tab-zifcdat,
+             p_werks  TO w_input_tab1-werks,
+             p_bedae  TO w_input_tab1-req_type,
+             '00000000' TO w_input_tab1-fstdat.
+      MOVE : req_outvalid-yyyyww TO w_input_tab1-oyyyyww,
+             req_outvalid-req_qty TO w_input_tab1-oweekqty,
+             req_outvalid-req_date TO w_input_tab1-ofstdat,
+             req_outvalid-req_withdr_qty TO w_input_tab1-orqentmg,
+             req_outvalid-unit     TO w_input_tab1-ounit,
+             req_outvalid-date_type TO w_input_tab1-oentlu.
+
+      MOVE: text-997 TO w_input_tab1-flgmssg.
+      MOVE : 'M' TO  w_input_tab1-req_mod.
+
+      APPEND w_input_tab1.
+    ENDIF.
+
+  ENDLOOP.
+
+*excel data non match PIR Data put into tab2
+  SORT w_input_tab1 BY matnr yyyyww fstdat.
+  LOOP AT w_input_tab.
+    READ TABLE w_input_tab1 WITH KEY matnr = w_input_tab-matnr
+                                    yyyyww = w_input_tab-yyyyww
+                                    fstdat = w_input_tab-fstdat BINARY SEARCH.
+    IF sy-subrc NE 0.
+      MOVE-CORRESPONDING w_input_tab TO w_input_tab2.
+      APPEND w_input_tab2.
+    ENDIF.
+  ENDLOOP.
+*COMBINE TAB1 AND TAB2 DATA
+  LOOP AT w_input_tab2 .
+    MOVE-CORRESPONDING w_input_tab2 TO w_input_tab1.
+    READ TABLE req_outvalid WITH KEY material = w_input_tab2-matnr.
+    IF sy-subrc EQ 0.
+      MOVE : 'M' TO w_input_tab1-req_mod. "20200320 SU + Has pir data & this week is not exist.
+    ELSE.
+      MOVE : 'A' TO w_input_tab1-req_mod. "20200320 SU + it's new pir material .
+    ENDIF.
+    APPEND w_input_tab1.
+  ENDLOOP.
+*20220228 su + for no pir qty weekly or monthly alv do not show out.
+  SORT w_input_tab1 BY matnr yyyyww fstdat.
+  LOOP AT w_input_tab1.
+    IF w_input_tab1-oweekqty > 0 OR w_input_tab1-weekqty > 0.
+      MOVE-CORRESPONDING w_input_tab1 TO w_input_tab3.
+      APPEND w_input_tab3. CLEAR w_input_tab3.
+    ENDIF.
+  ENDLOOP.
+
+*  w_input_tab[] = w_input_tab1[].
+   w_input_tab[] = w_input_tab3[].
+
+  PERFORM display_alv_pir_detail.
+
+END-OF-SELECTION.
+
+
+
+*&---------------------------------------------------------------------*
+*&      Form  CHECK_FCST_VERSION_NUMBER
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM check_fcst_version_number .
+
+  SELECT SINGLE * INTO CORRESPONDING FIELDS OF iztsd40s FROM ztsd40
+     WHERE zifcdat EQ p_ifcdat.
+  IF sy-subrc EQ 0.
+    MESSAGE s999 WITH text-998.
+  ENDIF.
+
+
+ENDFORM.                    " CHECK_FCST_VERSION_NUMBER
+*&---------------------------------------------------------------------*
+*&      Form  POPUP_TO_CONFIRM
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM popup_to_confirm CHANGING w_answer.
+
+  CALL FUNCTION 'POPUP_TO_CONFIRM'
+    EXPORTING
+*     TITLEBAR                    = ' '
+*     DIAGNOSE_OBJECT             = ' '
+      text_question               = text-996
+     text_button_1               =  text-995 "'Ja'(001)-yes
+*     ICON_BUTTON_1               = ' '
+     text_button_2               = text-994 "'Nein'(002)-no
+*     ICON_BUTTON_2               = ' '
+*     DEFAULT_BUTTON              = '1'
+*     DISPLAY_CANCEL_BUTTON       = 'X'
+*     USERDEFINED_F1_HELP         = ' '
+*     START_COLUMN                = 25
+*     START_ROW                   = 6
+*     POPUP_TYPE                  =
+*     IV_QUICKINFO_BUTTON_1       = ' '
+*     IV_QUICKINFO_BUTTON_2       = ' '
+   IMPORTING
+     answer                      = w_answer.
+*   TABLES
+*     PARAMETER                   =
+*   EXCEPTIONS
+*     TEXT_NOT_FOUND              = 1
+*     OTHERS                      = 2
+  .
+  IF sy-subrc <> 0.
+    MESSAGE ID sy-msgid TYPE sy-msgty NUMBER sy-msgno
+           WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+    MOVE : 'A' TO w_answer.
+  ENDIF.
+
+
+ENDFORM.                    " POPUP_TO_CONFIRM
+*&---------------------------------------------------------------------*
+*&      Form  PIR_CREATE_FAILURE_FLAG
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      -->P_W_BAPI_ITEM_MATERIAL  text
+*----------------------------------------------------------------------*
+FORM pir_update_failure_flag  USING    p_bapi_material p_bapi_comment.
+
+  LOOP AT w_output_tab WHERE matnr = p_bapi_material.
+    MOVE : 'X' TO w_output_tab-flag2,
+           p_bapi_comment  TO w_output_tab-flgmssg.
+
+    MODIFY w_output_tab.
+  ENDLOOP.
+
+
+ENDFORM.                    " PIR_CREATE_FAILURE_FLAG
+
+*&---------------------------------------------------------------------*
+*&      Form  DISPLAY_ALV
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+
+FORM display_alv_pir_detail.
+
+
+  REFRESH: gt_fieldcat.
+  PERFORM fieldcat USING  'REQ_TYPE' text-700 '' '' '' '' '' ''.
+  PERFORM fieldcat USING  'WERKS'    text-701 '' '' '' '' '' ''.
+  PERFORM fieldcat USING  'MATNR'    text-702 '' '' '' '' '' ''.
+  PERFORM fieldcat USING  'UNIT'     text-703 '' '' '' '' '' ''.
+  PERFORM fieldcat USING  'YYYYWW'   text-704 '' '' '' '' '' ''.
+  PERFORM fieldcat USING  'WEEKQTY'  text-705 '' '' '' '' 'DEC' '0'. "be come without decimal
+  PERFORM fieldcat USING  'FSTDAT'   text-706 '' '' '' '' '' ''.
+  PERFORM fieldcat USING  'OYYYYWW'  text-707 '' '' '' '' '' ''.
+  PERFORM fieldcat USING  'OWEEKQTY' text-708 '' '' '' '' 'DEC' '0'. "be come without decimal
+  PERFORM fieldcat USING  'ORQENTMG' text-709 '' '' '' '' '' ''.
+  PERFORM fieldcat USING  'OFSTDAT'  text-710 '' '' '' '' '' ''.
+  PERFORM fieldcat USING  'ZIFCDAT'  text-714 '' '' '' '' '' ''.
+  PERFORM fieldcat USING  'FLGMSSG'  text-711 '' '' '' '' '' ''.
+  PERFORM fieldcat USING  'FLAG'     text-712 '' '' '' '' '' ''.
+  PERFORM fieldcat USING  'FLAG2'    text-713 '' '' '' '' '' ''.
+
+
+  PERFORM eventtab_build USING gt_events[].
+* PERFORM comment_build  USING gt_list_top_of_page[].
+  PERFORM sort_build     USING gt_sort[].
+
+  g_repid = sy-repid.
+  alv_layout-colwidth_optimize = 'X'.
+  g_save = 'A'.
+  stru_disvar-report = g_repid.
+
+  CALL FUNCTION 'REUSE_ALV_GRID_DISPLAY'
+    EXPORTING
+      i_callback_program       = g_repid
+      i_callback_pf_status_set = g_pf_status
+      i_grid_title             = g_title
+      it_fieldcat              = gt_fieldcat
+      is_layout                = alv_layout
+      i_save                   = g_save
+      it_sort                  = gt_sort[]
+*     is_variant               = stru_disvar
+     i_callback_user_command  = g_user_command
+      it_events                = gt_events[]
+     TABLES
+       t_outtab = w_input_tab
+    EXCEPTIONS
+      program_error            = 1
+      OTHERS                   = 2.
+  IF sy-subrc = 1.
+    WRITE: 'Program error'(002).
+  ENDIF.
+
+ENDFORM.                    "DISPLAY_ALV
+*&---------------------------------------------------------------------*
+*&      Form  DISPLAY_ALV
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+
+FORM display_alv_pir_update.
+  REFRESH: gt_fieldcat.
+  PERFORM fieldcat USING  'REQ_TYPE' text-700 '' '' '' '' '' ''.
+  PERFORM fieldcat USING  'WERKS'    text-701 '' '' '' '' '' ''.
+  PERFORM fieldcat USING  'MATNR'    text-702 '' '' '' '' '' ''.
+  PERFORM fieldcat USING  'UNIT'     text-703 '' '' '' '' '' ''.
+  PERFORM fieldcat USING  'YYYYWW'   text-704 '' '' '' '' '' ''.
+  PERFORM fieldcat USING  'WEEKQTY'  text-705 '' '' '' '' 'DEC' '0'. "be come without decimal
+  PERFORM fieldcat USING  'FSTDAT'   text-706 '' '' '' '' '' ''.
+  PERFORM fieldcat USING  'OYYYYWW'  text-707 '' '' '' '' '' ''.
+  PERFORM fieldcat USING  'OWEEKQTY' text-708 '' '' '' '' 'DEC' '0'. "be come without decimal
+  PERFORM fieldcat USING  'ORQENTMG' text-709 '' '' '' '' '' ''.
+  PERFORM fieldcat USING  'OFSTDAT'  text-710 '' '' '' '' '' ''.
+  PERFORM fieldcat USING  'ZIFCDAT'  text-714 '' '' '' '' '' ''.
+  PERFORM fieldcat USING  'FLGMSSG'  text-711 '' '' '' '' '' ''.
+  PERFORM fieldcat USING  'FLAG'     text-712 '' '' '' '' '' ''.
+  PERFORM fieldcat USING  'FLAG2'    text-713 '' '' '' '' '' ''.
+
+  PERFORM eventtab_build USING gt_events[].
+* PERFORM comment_build  USING gt_list_top_of_page[].
+  PERFORM sort_build     USING gt_sort[].
+
+  g_repid = sy-repid.
+  alv_layout-colwidth_optimize = 'X'.
+  g_save = 'A'.
+  stru_disvar-report = g_repid.
+  g_title = text-986.
+
+  CALL FUNCTION 'REUSE_ALV_GRID_DISPLAY'
+    EXPORTING
+      i_callback_program       = g_repid
+      i_callback_pf_status_set = g_pf_status
+      i_grid_title             = g_title
+      it_fieldcat              = gt_fieldcat
+      is_layout                = alv_layout
+      i_save                   = g_save
+      it_sort                  = gt_sort[]
+*     is_variant               = stru_disvar
+     i_callback_user_command  = g_user_command
+      it_events                = gt_events[]
+     TABLES
+       t_outtab = w_output_tab
+    EXCEPTIONS
+      program_error            = 1
+      OTHERS                   = 2.
+  IF sy-subrc = 1.
+    WRITE: 'Program error'(002).
+  ENDIF.
+
+
+ENDFORM.                    "DISPLAY_ALV
+*&---------------------------------------------------------------------*
+*&      Form  FIELDCAT
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+
+FORM  fieldcat USING $fieldname $seltext $no_out $key $cfieldname $ctabname $datatype $decimals.
+
+  DATA: l_fieldcat TYPE slis_fieldcat_alv,
+        l_i          TYPE i.
+  l_i = l_i + 1.
+  l_fieldcat-row_pos = 0.
+  l_fieldcat-col_pos = l_i.
+  l_fieldcat-fieldname = $fieldname.
+  l_fieldcat-seltext_l = $seltext.
+  l_fieldcat-seltext_m = $seltext.
+  l_fieldcat-no_out = $no_out.
+  l_fieldcat-key = $key.
+  l_fieldcat-cfieldname = $cfieldname.
+  l_fieldcat-ctabname   = $ctabname.
+  l_fieldcat-datatype   = $datatype.
+  l_fieldcat-decimals_out    = $decimals.
+
+  APPEND l_fieldcat TO gt_fieldcat.
+
+ENDFORM.                    " FIELDCAT
+*&---------------------------------------------------------------------*
+*&      Form  SORT_BUILD
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      -->P_GT_SORT[]  text
+*----------------------------------------------------------------------*
+FORM sort_build USING lt_sort_ TYPE slis_t_sortinfo_alv.
+  DATA: ls_sort TYPE slis_sortinfo_alv.
+
+  CLEAR ls_sort.
+  ls_sort-fieldname = 'MATNR'.
+  ls_sort-spos      = 1.
+  ls_sort-up        = 'X'.
+  APPEND ls_sort TO lt_sort_.
+*  SORT_BUILD  USING    P_GT_SORT[].
+
+ENDFORM.                    " SORT_BUILD
+*&---------------------------------------------------------------------*
+*&      Form  PF_STATUS_SET
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      -->R_FLG_POPUP  text
+*----------------------------------------------------------------------*
+FORM pf_status_set USING r_flg_popup.
+  SET PF-STATUS 'ZPPR040'.
+
+ENDFORM.                    "PF_STATUS_SET
+*&---------------------------------------------------------------------*
+*&      Form  USER_COMMAND
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      -->R_UCOMM    text
+*----------------------------------------------------------------------*
+FORM user_command USING r_ucomm TYPE sy-ucomm
+                        rs_selfield TYPE slis_selfield.
+
+  DATA: l_index_no TYPE i,
+        l_fieldname TYPE slis_fieldname.
+
+  CASE r_ucomm.
+
+    WHEN 'ZBACK'.               " origi-'&F03'
+      $subrc = 1.               "the pravite of gui status exit control
+      r_ucomm = '&F03'.         "function:reuse_alv_grid_display?gui status name
+    WHEN 'ZEXIT'.               "origi. '&F15'
+      $subrc = 1.
+      r_ucomm = '&F15'.
+    WHEN 'ZCANCEL'.               "origi. '&F12'
+      $subrc = 1.
+      r_ucomm = '&F12'.
+    WHEN 'PIR_SAVE'. "save PIR
+      READ TABLE w_input_tab WITH KEY flag = 'X'.
+      IF sy-subrc EQ  0.
+        PERFORM popup_to_display_text USING  text-993 text-996.
+      ELSE.
+        READ TABLE w_output_tab INDEX 1.
+        IF sy-subrc EQ 0.
+          PERFORM popup_to_display_text USING  text-989 text-988.
+        ELSE.
+          PERFORM save_pir_data.
+          PERFORM popup_to_display_text USING  text-987 text-988.
+        ENDIF.
+      ENDIF.
+    WHEN '%EX'.
+      LEAVE TO SCREEN 0.
+    WHEN 'PIR_DTL'. "PIR UPDATE
+      READ TABLE w_output_tab INDEX 1.
+      IF sy-subrc EQ 0.
+        PERFORM display_alv_pir_update.
+      ELSE.
+        PERFORM popup_to_display_text USING text-992 text-995.
+      ENDIF.
+
+  ENDCASE.
+
+ENDFORM.                    "user_command
+
+
+*----------------------------------------------------------
+*  Form eventtab_build  -->  RT_EVENTS
+* ----------------------------------------------------------
+
+FORM eventtab_build USING rt_events TYPE slis_t_event.
+  DATA: ls_event TYPE slis_alv_event.
+  CALL FUNCTION 'REUSE_ALV_EVENTS_GET'
+    EXPORTING
+      i_list_type = 0
+    IMPORTING
+      et_events   = rt_events.
+  READ TABLE rt_events WITH KEY name = slis_ev_pf_status_set
+                           INTO ls_event.
+  IF sy-subrc = 0.
+    MOVE g_pf_status TO ls_event-form.
+    APPEND ls_event TO rt_events.
+  ENDIF.
+
+*     READ TABLE rt_events WITH KEY name = slis_ev_top_of_page
+*                             INTO ls_event.
+*     IF sy-subrc = 0.
+*       MOVE g_top_of_page TO ls_event-form.
+*       APPEND ls_event TO rt_events.
+*     ENDIF.
+ENDFORM.                    "eventtab_build
+*&---------------------------------------------------------------------*
+*&      Form  SAVE_PIR_DATA
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM save_pir_data .
+
+  CLEAR: w_bapi_item,requirements_schedule_in,return.
+  REFRESH: requirements_schedule_in, return, w_output_tab.
+  DATA: w_req_mod LIKE w_input_tab1-req_mod.
+
+  LOOP AT w_input_tab.
+    MOVE-CORRESPONDING w_input_tab TO w_output_tab.
+    APPEND w_output_tab. CLEAR w_output_tab.
+*header data
+    MOVE w_input_tab-matnr TO w_bapi_item-material.
+    MOVE w_input_tab-werks TO w_bapi_item-plant.
+    MOVE w_input_tab-req_type TO w_bapi_item-requ_type.
+    MOVE p_versb TO w_bapi_item-version.
+    MOVE 'X' TO w_bapi_item-vers_activ.
+    MOVE w_input_tab-pbdnr  TO w_bapi_item-req_number.
+    MOVE : w_input_tab-req_mod TO w_req_mod.
+    IF w_input_tab-req_mod EQ 'M'.
+*detail data for new item or old item modify qty
+      IF w_input_tab-fstdat NE '00000000'."number week is avaluable.
+*20220228 SU M
+*        MOVE p_entlu TO requirements_schedule_in-date_type.
+        IF w_input_tab-cflgwm EQ 'W'.
+          MOVE : '2' TO requirements_schedule_in-date_type.
+        ENDIF.
+        IF w_input_tab-cflgwm EQ 'M'.
+          MOVE : '3' TO requirements_schedule_in-date_type.
+        ENDIF.
+        MOVE w_input_tab-fstdat TO requirements_schedule_in-req_date.
+        MOVE w_input_tab-weekqty  TO requirements_schedule_in-req_qty.
+        MOVE w_input_tab-unit  TO requirements_schedule_in-unit.
+        APPEND requirements_schedule_in.
+        CLEAR requirements_schedule_in.
+      ELSE.
+*no match exce data old requirement qty to be zero qty .
+        IF w_input_tab-oweekqty NE 0.
+          MOVE w_input_tab-oentlu TO requirements_schedule_in-date_type.
+          MOVE w_input_tab-ofstdat TO requirements_schedule_in-req_date.
+          MOVE 0 TO requirements_schedule_in-req_qty.
+          MOVE w_input_tab-ounit  TO requirements_schedule_in-unit.
+          APPEND requirements_schedule_in.
+          CLEAR requirements_schedule_in.
+        ENDIF.
+      ENDIF.
+    ELSE.
+*ADD NEW PN Requirememnt schedule lines.
+*20220228 su M
+*      MOVE p_entlu TO requirements_schedule_in-date_type.
+      IF w_input_tab-cflgwm EQ 'W'.
+        MOVE : '2' TO requirements_schedule_in-date_type.
+      ENDIF.
+      IF w_input_tab-cflgwm EQ 'M'.
+        MOVE : '3' TO requirements_schedule_in-date_type.
+      ENDIF.
+      MOVE w_input_tab-fstdat TO requirements_schedule_in-req_date.
+      MOVE w_input_tab-weekqty  TO requirements_schedule_in-req_qty.
+      MOVE w_input_tab-unit  TO requirements_schedule_in-unit.
+      APPEND requirements_schedule_in.
+      CLEAR requirements_schedule_in.
+    ENDIF.
+    AT END OF  matnr.
+*Modify mode
+      IF w_req_mod EQ 'M'.
+        CALL FUNCTION 'BAPI_REQUIREMENTS_CHANGE'
+       EXPORTING
+         material                       = w_bapi_item-material
+         plant                          = w_bapi_item-plant
+         requirementstype               = w_bapi_item-requ_type
+         version                        = w_bapi_item-version
+         reqmtsplannumber               = w_bapi_item-req_number
+         vers_activ                     = w_bapi_item-vers_activ
+*       REQUIREMENT_PARAM              =
+*       MRP_AREA                       =
+         delete_old                     = ' '
+*     IMPORTING
+*       REQUIREMENT_ITEM_OUT           =
+       TABLES
+         requirements_schedule_in       = requirements_schedule_in
+*      REQUIREMENTS_CHAR_IN           =
+         return                         = return
+               .
+      ELSE.
+*ADD MODE
+        CALL FUNCTION 'BAPI_REQUIREMENTS_CREATE'
+        EXPORTING
+          requirements_item              = w_bapi_item
+*         REQUIREMENT_PARAM              =
+*       IMPORTING
+*         MATERIAL                       =
+*         PLANT                          =
+*         REQUIREMENTSTYPE               =
+*         VERSION                        =
+*         REQMTSPLANNUMBER               =
+*         MRP_AREA                       =
+        TABLES
+          requirements_schedule_in       = requirements_schedule_in
+*         REQUIREMENTS_CHAR_IN           =
+          return                         = return.
+      ENDIF.
+      IF NOT return[] IS INITIAL.
+        LOOP AT return WHERE type = 'E'.
+        ENDLOOP.
+        IF sy-subrc EQ 0.
+          wa_rejections-matnr = w_bapi_item-material.
+          WRITE return-message TO wa_rejections-comment.
+
+          PERFORM pir_update_failure_flag USING wa_rejections-matnr wa_rejections-comment.
+        ENDIF.
+      ENDIF.
+      CLEAR: w_bapi_item,requirements_schedule_in,return.
+      REFRESH: requirements_schedule_in, return.
+
+    ENDAT.
+
+  ENDLOOP.
+
+ENDFORM.                    " SAVE_PIR_DATA
+
+*&---------------------------------------------------------------------*
+*&      Form  WEEKFIRSTDATE_GET
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      -->P_COL_WEEKS_YYYYWW  text
+*      <--P_COL_WEEKS_FSTDATE  text
+*----------------------------------------------------------------------*
+FORM weekfirstdate_get  USING    p_yyyyww
+                        CHANGING p_fstdate
+                                 p_fstdatl.
+  DATA: w_fstdat  LIKE sy-datum,
+        w_7fstdat LIKE sy-datum,
+        w_7dat    LIKE sy-datum,
+        1_fstdat LIKE sy-datum,
+        7_fstdat LIKE sy-datum.
+
+  CALL FUNCTION 'WEEK_GET_FIRST_DAY'
+    EXPORTING
+      week         = p_yyyyww
+    IMPORTING
+      date         = w_fstdat
+    EXCEPTIONS
+      week_invalid = 1
+      OTHERS       = 2.
+
+  IF sy-subrc <> 0.
+    MESSAGE ID sy-msgid TYPE sy-msgty NUMBER sy-msgno
+            WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+  ELSE.
+    w_7fstdat = w_fstdat + 6.
+*    w_7dat = w_fstdat + 6.
+*    IF w_fstdat+0(6) NE w_7dat+0(6). "check last of week date has cross next month.
+*      w_7fstdat  = w_7dat.
+*      w_7fstdat+6(2) = '01'.
+*    ELSE.
+*      MOVE '00000000' TO w_7fstdat.
+*    ENDIF.
+    PERFORM convert_workingday USING w_fstdat w_7fstdat
+                            CHANGING 1_fstdat 7_fstdat.
+
+*    READ TABLE col_weeks WITH KEY yyyyww = p_yyyyww.
+*    if sy-subrc eq 0.
+    MOVE 1_fstdat TO p_fstdate.
+    MOVE 7_fstdat TO p_fstdatl.
+*    endif.
+*    IF sy-subrc NE 0  AND 1_fstdat LE w_7dat.
+*      MOVE 1_fstdat TO p_fstdate.
+*      MOVE 1_fstdat TO p_fstdatl.
+*    ELSE.
+*      IF 7_fstdat  LE w_7dat.
+*        MOVE 7_fstdat TO p_fstdate.
+*        MOVE 7_fstdat TO p_fstdatl.
+*      ENDIF.
+*    ENDIF.
+  ENDIF.
+ENDFORM.                    " WEEKFIRSTDATE_GET
+*&---------------------------------------------------------------------*
+*&      Form  REQUIRMENTGETDETAIL
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      -->P_W_INPUT_TAB_MATNR  text
+*      -->P_P_WERKS  text
+*      -->P_P_BEDAE  text
+*      -->P_P_VERSB  text
+*      -->P_P_PBDNR  text
+*      <--P_W_INPUT_TAB_FLAG  text
+*----------------------------------------------------------------------*
+FORM requirmentgetdetail  USING    pw_matnr
+                                   pp_werks
+                                   pp_bedae
+                                   pp_versb
+                                   pp_pbdnr
+                                   pp_fstdats
+                                   pp_fstdatl
+                          CHANGING pw_flag
+                                   pw_fmssge.
+  MOVE text-899 TO pw_fmssge.
+*  MOVE 'X'      TO pw_flag.
+  CALL FUNCTION 'BAPI_REQUIREMENTS_GETDETAIL'
+    EXPORTING
+      material               = pw_matnr
+      plant                  = pp_werks
+      requirementstype       = pp_bedae
+      version                = pp_versb
+      reqmtsplannumber       = pp_pbdnr
+*        reqmtsplannumber       = w_bapi_item-req_number
+*       MRP_AREA               =
+    TABLES
+      requirements_out       = requirements_out
+      return                 = return
+            .
+
+  LOOP AT requirements_out.
+*20220228 SU REQ QTY ZERO NO CHECK .
+*   CHECK requirements_out-req_qty GT 0.
+*20200320 all requirement date
+*   CHECK requirements_out-req_date GE pp_fstdats.
+    MOVE-CORRESPONDING requirements_out TO req_outvalid.
+*"week requirment translater to number weeks
+*    IF req_outvalid-date_type EQ p_entlu. "20171012 sue -
+    PERFORM dategetweek USING req_outvalid-req_date
+                              req_outvalid-date_type
+                        CHANGING req_outvalid-yyyyww.
+*    ELSE.
+*in the week period has Non week requriemnt qty check
+*20200320 all requirement
+*   IF requirements_out-req_date >= pp_fstdats AND requirements_out-req_date <= pp_fstdatl.
+    MOVE-CORRESPONDING requirements_out TO req_weekpdwmnth.
+    APPEND req_weekpdwmnth.
+*   ENDIF.
+*    ENDIF.
+    APPEND req_outvalid. CLEAR req_outvalid.
+    CLEAR: pw_flag, pw_fmssge.
+  ENDLOOP.
+
+
+ENDFORM.                    " REQUIRMENTGETDETAIL
+*&---------------------------------------------------------------------*
+*&      Form  DATEGETWEEK
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      -->P_REQ_OUTVALID_REQ_DATE  text
+*      <--P_REQ_OUTVALID_YYYYWW  text
+*----------------------------------------------------------------------*
+FORM dategetweek  USING    p_req_date p_dt_type
+                  CHANGING p_reqyyyyww.
+  IF p_dt_type EQ '3'. "Monthly
+    p_reqyyyyww = p_req_date(6).
+  ELSE. "weekly
+
+    CALL FUNCTION 'DATE_GET_WEEK'
+      EXPORTING
+        date         = p_req_date
+      IMPORTING
+        week         = p_reqyyyyww
+      EXCEPTIONS
+        date_invalid = 1
+        OTHERS       = 2.
+    IF sy-subrc <> 0.
+* MESSAGE ID SY-MSGID TYPE SY-MSGTY NUMBER SY-MSGNO
+*         WITH SY-MSGV1 SY-MSGV2 SY-MSGV3 SY-MSGV4.
+    ENDIF.
+
+  ENDIF.
+
+
+ENDFORM.                    " DATEGETWEEK
+
+
+*&---------------------------------------------------------------------*
+*&      Form  POPUP_TO_DISPLAY_TEXT
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      -->P_TEXT_900  text
+*----------------------------------------------------------------------*
+FORM popup_to_display_text  USING  p_text1 p_text2.
+
+  CALL FUNCTION 'POPUP_TO_DISPLAY_TEXT_LO'
+    EXPORTING
+      titel              = text-994
+      textline1          = p_text1
+      textline2          = p_text2
+*       TEXTLINE3          = ' '
+*       START_COLUMN       = 15
+*       START_ROW          = 6
+             .
+
+ENDFORM.                    " POPUP_TO_DISPLAY_TEXT
+*&---------------------------------------------------------------------*
+*&      Form  CONVERT_WORKINGDAY
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      -->P_W_FSTDAT  text
+*      <--P_W_WFSTDAT  text
+*----------------------------------------------------------------------*
+FORM convert_workingday  USING    p_1fstdat
+                                  p_7fstdat
+                         CHANGING _1fstdat _7fstdat.
+
+
+  CALL FUNCTION 'DATE_CONVERT_TO_WORKINGDAY'
+    EXPORTING
+      date              = p_1fstdat
+      direction         = '+'
+    IMPORTING
+      workingday        = _1fstdat
+    TABLES
+      factory_calendars = t_cals.
+  CALL FUNCTION 'DATE_CONVERT_TO_WORKINGDAY'
+    EXPORTING
+      date              = p_7fstdat
+      direction         = '-'
+    IMPORTING
+      workingday        = _7fstdat
+    TABLES
+      factory_calendars = t_cals.
+
+  IF _1fstdat > p_7fstdat .
+    MOVE: '00000000' TO _1fstdat ,
+           _1fstdat TO  _7fstdat.
+
+  ENDIF.
+*
+*  IF p_7fstdat NE '00000000'.
+*    CALL FUNCTION 'DATE_CONVERT_TO_WORKINGDAY'
+*      EXPORTING
+*        date              = p_7fstdat
+*        direction         = '+'
+*      IMPORTING
+*        workingday        = _7fstdat
+*      TABLES
+*        factory_calendars = t_cals.
+*  ELSE.
+*    MOVE _1fstdat TO  _7fstdat.
+*  ENDIF.
+
+ENDFORM.                    " CONVERT_WORKINGDAY
+*&---------------------------------------------------------------------*
+*&      Form  MONTHFIRSTDATE_GET
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      -->P_COL_WEEKS_YYYYWW  text
+*      <--P_COL_WEEKS_FSTDAT  text
+*----------------------------------------------------------------------*
+FORM monthfirstdate_get  USING    i_wyyyyww
+                         CHANGING o_fstdat.
+
+  DATA: w_date LIKE sy-datum.
+  CONCATENATE i_wyyyyww '01' INTO w_date.
+*20220316 Su M Current monthly pir start date is system date.
+  if w_date < sy-datum .
+     MOVE SY-DATUM TO W_DATE.
+  endif.
+
+  CALL FUNCTION 'DATE_CONVERT_TO_WORKINGDAY'
+    EXPORTING
+      date              = w_date
+      direction         = '+'
+    IMPORTING
+      workingday        = o_fstdat
+    TABLES
+      factory_calendars = t_cals.
+ENDFORM.                    " MONTHFIRSTDATE_GET

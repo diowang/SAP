@@ -1,0 +1,471 @@
+************************************************************************
+* Program Name      :ZTEXT_ANNA_0115
+* Descriptions      :
+* Updates Tables    :
+* Input  Parameters :
+* Output Parameters :
+* Return Codes      :
+* Special Logic     :
+* Includes          :
+************************************************************************
+* Modification Log
+************************************************************************
+*   Date     Ver. Programmer   Descriptions
+* --------   ---- ------------
+"-------------------------------------------
+*2024/01/12  Anna  1.0       ALV GOT_SAMPLE
+*
+************************************************************************
+REPORT  ZTEXT_ANNA_0115
+        MESSAGE-ID 00   NO STANDARD PAGE HEADING
+        LINE-COUNT 60
+        LINE-SIZE 90.
+
+
+************************************************************************
+* Tables Definitions  宣告查詢條件的引用TABLE
+************************************************************************
+
+TABLES: AUFK,AFRU,PLPO.
+
+************************************************************************
+* Data Definitions  宣告變量& ALV
+************************************************************************
+DATA: BEGIN OF GT_TABLE OCCURS 0,
+
+      WERKS LIKE AFRU-WERKS, "工廠
+      AUFNR LIKE AFRU-AUFNR, "工單號碼
+      PLNBEZ LIKE AFKO-PLNBEZ, "料號
+      RUECK LIKE AFRU-RUECK, "確認
+      VORNR LIKE AFRU-VORNR, "作業
+      LTXA12 LIKE AFVC-LTXA1, "作業短文
+      KTSCH LIKE AFVC-KTSCH, "標準內文碼
+      ARBPL LIKE CRHD-ARBPL,"工作中心
+      KOSTL LIKE CRCO-KOSTL,"成本中心
+      GMNGA LIKE AFRU-GMNGA,"良品率
+      XMNGA LIKE AFRU-XMNGA,"重工
+      RMNGA LIKE AFRU-RMNGA,"廢品
+      MEINH LIKE AFRU-MEINH,"確認單位
+      AUERU LIKE AFRU-AUERU,"最後確認
+      STOKZ LIKE AFRU-STOKZ,"取消確認
+      BUDAT LIKE AFRU-BUDAT,"過帳日期
+      PERNR LIKE AFRU-PERNR,"員工號碼
+      GRUND LIKE AFRU-GRUND,"原因
+      IEBZ  LIKE AFRU-IEBZ,"處理完成
+      ERSDA LIKE AFRU-ERSDA,"建立日期
+      ERZET LIKE AFRU-ERZET,"輸入時間
+      LTXA1 LIKE AFRU-LTXA1,"確認內文
+
+      AUFPL LIKE AFRU-AUFPL,
+      APLZL LIKE AFRU-APLZL,
+      ARBID LIKE AFRU-ARBID,
+
+      END OF GT_TABLE.
+
+
+*--> ALV3
+TYPE-POOLS: SLIS.
+DATA: GS_fieldcat type slis_fieldcat_alv, "列屬性
+      GT_fieldcat type slis_t_fieldcat_alv,
+      GS_LAYOUT TYPE slis_LAYOUT_ALV,"表架構
+      GS_SORT TYPE slis_sortinfo_alv,  "排序
+      GT_SORT TYPE slis_t_sortinfo_alv,
+      GS_EVENTS TYPE slis_ALV_event,  "CALLBACK 事件
+      GT_EVENTS TYPE slis_T_EVENT.
+************************************************************************
+* Includes Module 引用其他的程式
+************************************************************************
+*INCLUDE :
+
+************************************************************************
+* Selection Screen  查詢條件
+************************************************************************
+
+
+SELECTION-SCREEN BEGIN OF BLOCK a1 WITH FRAME TITLE text-001.
+
+    "工廠
+    PARAMETERS P_WERKS LIKE AUFK-WERKS OBLIGATORY.
+    "工單號碼
+    SELECT-OPTIONS  S_AUFNR FOR AUFK-AUFNR.
+    "過帳=報工
+    SELECT-OPTIONS  S_BUDAT FOR AFRU-BUDAT.
+    "建立日期
+    SELECT-OPTIONS  S_ERSDA FOR AFRU-ERSDA.
+    "標準內文碼
+    SELECT-OPTIONS  S_KTSCH FOR PLPO-KTSCH.
+
+
+
+SELECTION-SCREEN END OF BLOCK a1.
+
+
+************************************************************************
+* Initialization 程式最#開始執#的Event，多用於預設變數值
+************************************************************************
+INITIALIZATION.
+
+************************************************************************
+* At Selection Screen Output
+************************************************************************
+AT SELECTION-SCREEN OUTPUT.
+
+************************************************************************
+* At Selection Screen
+*     AT SELECTION-SCREEN.用於畫面資料的檢查
+*     AT USER-COMMAND.報表上的獨立按鈕功能觸發
+*     AT LINE-SELECTION.
+"    使用者點選畫面某筆資料時觸發動作，畫面資料和底層資料是無相關的
+************************************************************************
+AT SELECTION-SCREEN.
+   perform check.
+AT USER-COMMAND.
+
+AT LINE-SELECTION.
+
+************************************************************************
+* Report Format
+*    TOP-OF-PAGE  報表的表頭
+*    END-OF-PAGE. 報表的表尾，LINE COUNT 需要多宣告表尾行數
+************************************************************************
+TOP-OF-PAGE.
+
+END-OF-PAGE.
+
+************************************************************************
+* Main Process  主程式
+*  START-OF-SELECTION.
+*  透過Selection screen輸入的篩選條件，到Database撈取資料，並進行資料的撈取，處理
+*  END-OF-SELECTION.
+*  將處理過後的資料進行結果呈現，有可能是印出報表、ALV報表，或是下載成檔案
+************************************************************************
+START-OF-SELECTION.
+   PERFORM GET_DATA."取得數據
+   PERFORM WRITE_DATA."顯示數據
+
+END-OF-SELECTION.
+*&---------------------------------------------------------------------*
+*&      Form  GET_DATA
+*&---------------------------------------------------------------------*
+FORM GET_DATA .
+
+  DATA L_INDEX TYPE SY-TABIX.
+
+"工廠   P_WERKS
+"工單號碼  S_AUFNR FOR
+"過帳=報工 S_BUDAT
+"建立日期   S_DATUM
+"標準內文碼 S_KTSCH
+
+
+
+   SELECT
+     A~WERKS A~AUFNR A~RUECK A~VORNR
+     A~GMNGA A~XMNGA A~RMNGA A~MEINH A~AUERU A~STOKZ A~BUDAT
+     A~PERNR A~GRUND A~IEBZ  A~ERSDA A~ERZET A~LTXA1
+     B~PLNBEZ
+     A~AUFPL A~APLZL A~ARBID
+    FROM AFRU AS A
+    INNER JOIN AFKO AS B
+    ON A~AUFNR = B~AUFNR
+    INTO CORRESPONDING FIELDS OF TABLE GT_TABLE
+    WHERE A~WERKS = P_WERKS
+    AND A~BUDAT IN S_BUDAT
+    AND A~ERSDA IN S_ERSDA
+    AND A~AUFNR IN S_AUFNR .
+
+     IF GT_TABLE[] IS INITIAL.
+         MESSAGE S001 WITH TEXT-001 DISPLAY LIKE 'E'.
+         STOP.
+     ENDIF.
+
+     SORT GT_TABLE BY AUFNR.
+
+     LOOP AT GT_TABLE.
+       CLEAR L_INDEX.
+       L_INDEX = SY-TABIX.
+
+       IF SY-SUBRC = 0.
+
+        SELECT SINGLE A~LTXA1 A~KTSCH
+          FROM AFVC AS A
+          INTO (GT_TABLE-LTXA12,GT_TABLE-KTSCH)
+         WHERE AUFPL = GT_TABLE-AUFPL
+         AND   APLZL = GT_TABLE-APLZL.
+
+
+        SELECT SINGLE A~ARBPL B~KOSTL
+          FROM CRHD AS A
+          INNER JOIN CRCO AS B
+          ON A~OBJID = B~OBJID
+          INTO (GT_TABLE-ARBPL,GT_TABLE-KOSTL)
+          WHERE A~OBJID = GT_TABLE-ARBID
+          AND B~OBJID = GT_TABLE-ARBID.
+
+
+       ENDIF.
+
+       MODIFY GT_TABLE FROM GT_TABLE INDEX L_INDEX.
+     ENDLOOP.
+
+
+
+ENDFORM.                    " GET_DATA
+*&---------------------------------------------------------------------*
+*&      Form  WRITE_DATA
+*----------------------------------------------------------------------*
+FORM WRITE_DATA .
+
+*--> ALV 欄位設定
+  PERFORM FIELDCAT_REUSE_ALV_LVC_INIT.
+
+  "表結構設定
+  GS_LAYOUT-ZEBRA = 'X'.                    "顏色交替檢視
+  GS_LAYOUT-COLWIDTH_OPTIMIZE = 'X'.
+
+  PERFORM BU_SORT.
+
+
+  CALL FUNCTION 'REUSE_ALV_GRID_DISPLAY'
+    EXPORTING
+      I_CALLBACK_PROGRAM       = SY-CPROG
+      IS_LAYOUT                = GS_LAYOUT
+      IT_FIELDCAT              = GT_FIELDCAT
+      IT_SORT                  = GT_SORT
+      I_CALLBACK_USER_COMMAND  = 'USER_COMMAND'
+    TABLES
+      T_OUTTAB                 = GT_TABLE[] "內表
+    EXCEPTIONS
+      PROGRAM_ERROR            = 1
+      OTHERS                   = 2.
+  IF SY-SUBRC <> 0.
+* Implement suitable error handling here
+  ENDIF.
+
+ENDFORM.                    " WRITE_DATA
+*&---------------------------------------------------------------------*
+*&      Form  FIELDCAT_REUSE_ALV_LVC_INIT
+*       ALV 欄位設定
+*&---------------------------------------------------------------------*
+FORM FIELDCAT_REUSE_ALV_LVC_INIT .
+  DATA: L_NAME  LIKE SY-REPID,
+        L_NAME2 LIKE TRDIR-NAME.
+  DATA: LT_FIELDCAT TYPE SLIS_T_FIELDCAT_ALV.
+  DATA: L_INDEX     TYPE SY-TABIX.
+
+  CLEAR: GT_FIELDCAT[].
+  L_NAME = L_NAME2 = SY-CPROG."程式名稱
+
+  CALL FUNCTION 'REUSE_ALV_FIELDCATALOG_MERGE' "顯示的欄位
+    EXPORTING
+      I_PROGRAM_NAME         = L_NAME
+      I_INTERNAL_TABNAME     = 'GT_TABLE' "放入定義的內表
+*     I_STRUCTURE_NAME       =
+      I_INCLNAME             = L_NAME2
+      I_CLIENT_NEVER_DISPLAY = 'X'
+      I_BYPASSING_BUFFER     = 'X'
+*     I_BUFFER_ACTIVE        =
+    CHANGING
+      CT_FIELDCAT            = LT_FIELDCAT "定義欄位
+    EXCEPTIONS
+      INCONSISTENT_INTERFACE = 1
+      PROGRAM_ERROR          = 2
+      OTHERS                 = 3.
+
+   IF SY-SUBRC <> 0.
+* Implement suitable error handling here
+  ENDIF.
+
+  APPEND LINES OF LT_FIELDCAT TO GT_FIELDCAT.
+
+*--> 調整已產生的ALV表頭
+  LOOP AT GT_FIELDCAT INTO GS_FIELDCAT.
+    L_INDEX = SY-TABIX.
+
+    CASE GS_FIELDCAT-FIELDNAME.
+      WHEN 'WERKS'.
+        GS_FIELDCAT-SELTEXT_S = GS_FIELDCAT-SELTEXT_M =
+        GS_FIELDCAT-SELTEXT_L = '工廠'.
+      WHEN 'AUFNR'.
+        GS_FIELDCAT-SELTEXT_S = GS_FIELDCAT-SELTEXT_M =
+        GS_FIELDCAT-SELTEXT_L = '工單單號'.
+      WHEN 'PLNBEZ'.
+        GS_FIELDCAT-SELTEXT_S = GS_FIELDCAT-SELTEXT_M =
+        GS_FIELDCAT-SELTEXT_L = '料號'.
+      WHEN 'RUECK'.
+        GS_FIELDCAT-SELTEXT_S = GS_FIELDCAT-SELTEXT_M =
+        GS_FIELDCAT-SELTEXT_L = '確認'.
+      WHEN 'VORNR'.
+        GS_FIELDCAT-SELTEXT_S = GS_FIELDCAT-SELTEXT_M =
+        GS_FIELDCAT-SELTEXT_L = '作業'.
+      WHEN 'LTXA12'.
+        GS_FIELDCAT-SELTEXT_S = GS_FIELDCAT-SELTEXT_M =
+        GS_FIELDCAT-SELTEXT_L = '作業短文'.
+      WHEN 'KTSCH'.
+        GS_FIELDCAT-SELTEXT_S = GS_FIELDCAT-SELTEXT_M =
+        GS_FIELDCAT-SELTEXT_L = '標準內文碼'.
+      WHEN 'ARBPL'.
+        GS_FIELDCAT-SELTEXT_S = GS_FIELDCAT-SELTEXT_M =
+        GS_FIELDCAT-SELTEXT_L = '工作中心'.
+      WHEN 'KOSTL'.
+        GS_FIELDCAT-SELTEXT_S = GS_FIELDCAT-SELTEXT_M =
+        GS_FIELDCAT-SELTEXT_L = '成本中心'.
+      WHEN 'GMNGA'.
+        GS_FIELDCAT-SELTEXT_S = GS_FIELDCAT-SELTEXT_M =
+        GS_FIELDCAT-SELTEXT_L ='良品率'.
+      WHEN 'XMNGA'.
+        GS_FIELDCAT-SELTEXT_S = GS_FIELDCAT-SELTEXT_M =
+        GS_FIELDCAT-SELTEXT_L = '重工'.
+      WHEN 'RMNGA'.
+        GS_FIELDCAT-SELTEXT_S = GS_FIELDCAT-SELTEXT_M =
+        GS_FIELDCAT-SELTEXT_L =  '廢品'.
+      WHEN 'MEINH'.
+        GS_FIELDCAT-SELTEXT_S = GS_FIELDCAT-SELTEXT_M =
+        GS_FIELDCAT-SELTEXT_L = '確認單位'.
+      WHEN 'AUERU'.
+        GS_FIELDCAT-SELTEXT_S = GS_FIELDCAT-SELTEXT_M =
+        GS_FIELDCAT-SELTEXT_L = '最後確認'.
+      WHEN 'STOKZ'.
+        GS_FIELDCAT-SELTEXT_S = GS_FIELDCAT-SELTEXT_M =
+        GS_FIELDCAT-SELTEXT_L = '取消確認'.
+      WHEN 'BUDAT'.
+        GS_FIELDCAT-SELTEXT_S = GS_FIELDCAT-SELTEXT_M =
+        GS_FIELDCAT-SELTEXT_L = '過帳日期'.
+      WHEN 'PERNR'.
+        GS_FIELDCAT-SELTEXT_S = GS_FIELDCAT-SELTEXT_M =
+        GS_FIELDCAT-SELTEXT_L = '員工號碼'.
+      WHEN 'GRUND'.
+        GS_FIELDCAT-SELTEXT_S = GS_FIELDCAT-SELTEXT_M =
+        GS_FIELDCAT-SELTEXT_L = '原因'.
+      WHEN 'IEBZ'.
+        GS_FIELDCAT-SELTEXT_S = GS_FIELDCAT-SELTEXT_M =
+        GS_FIELDCAT-SELTEXT_L = '處理完成'.
+      WHEN 'ERSDA'.
+        GS_FIELDCAT-SELTEXT_S = GS_FIELDCAT-SELTEXT_M =
+        GS_FIELDCAT-SELTEXT_L = '建立日期'.
+      WHEN 'ERZET'.
+        GS_FIELDCAT-SELTEXT_S = GS_FIELDCAT-SELTEXT_M =
+        GS_FIELDCAT-SELTEXT_L ='輸入時間'.
+      WHEN 'LTXA1'.
+        GS_FIELDCAT-SELTEXT_S = GS_FIELDCAT-SELTEXT_M =
+        GS_FIELDCAT-SELTEXT_L = '確認內文'.
+
+      WHEN  'AUFPL'.
+        GS_FIELDCAT-NO_OUT = 'X'.  "隱藏
+      WHEN  'APLZL'.
+        GS_FIELDCAT-NO_OUT = 'X'.  "隱藏
+      WHEN  'ARBID'.
+        GS_FIELDCAT-NO_OUT = 'X'.  "隱藏
+
+    ENDCASE.
+
+    GS_FIELDCAT-DDICTXT = 'L'.
+    MODIFY GT_FIELDCAT FROM GS_FIELDCAT INDEX L_INDEX.
+  ENDLOOP.
+
+
+ENDFORM.                    " FIELDCAT_REUSE_ALV_LVC_INIT
+*&---------------------------------------------------------------------*
+*&      Form  BU_SORT
+*&---------------------------------------------------------------------*
+FORM BU_SORT .
+  DATA: LS_SORT TYPE SLIS_SORTINFO_ALV.
+  "工廠
+    LS_SORT-TABNAME = 'GT_TABLE'. "表格名稱
+    LS_SORT-FIELDNAME = 'WERKS'.  "欄位名稱
+    LS_SORT-SPOS      = 1.   "排序順序
+*LS_SORT-DOWN = 'X'.   "'降冪
+    LS_SORT-UP        = 'X'.    "升冪
+    APPEND LS_SORT TO GT_SORT.  CLEAR LS_SORT.
+
+    "工單
+     LS_SORT-TABNAME = 'GT_TABLE'. "表格名稱
+    LS_SORT-FIELDNAME = 'AUFNR'.  "欄位名稱
+    LS_SORT-SPOS      = 2.   "排序順序
+*LS_SORT-DOWN = 'X'.   "'降冪
+    LS_SORT-UP        = 'X'.    "升冪
+    APPEND LS_SORT TO GT_SORT.  CLEAR LS_SORT.
+
+    "物料
+     LS_SORT-TABNAME = 'GT_TABLE'. "表格名稱
+    LS_SORT-FIELDNAME = 'PLNBEZ'.  "欄位名稱
+    LS_SORT-SPOS      = 3.   "排序順序
+*LS_SORT-DOWN = 'X'.   "'降冪
+    LS_SORT-UP        = 'X'.    "升冪
+    APPEND LS_SORT TO GT_SORT.  CLEAR LS_SORT.
+
+    "確認
+     LS_SORT-TABNAME = 'GT_TABLE'. "表格名稱
+    LS_SORT-FIELDNAME = 'RUECK'.  "欄位名稱
+    LS_SORT-SPOS      = 4.   "排序順序
+*LS_SORT-DOWN = 'X'.   "'降冪
+    LS_SORT-UP        = 'X'.    "升冪
+    APPEND LS_SORT TO GT_SORT.  CLEAR LS_SORT.
+
+    "作業
+     LS_SORT-TABNAME = 'GT_TABLE'. "表格名稱
+    LS_SORT-FIELDNAME = 'VORNR'.  "欄位名稱
+    LS_SORT-SPOS      = 5.   "排序順序
+*LS_SORT-DOWN = 'X'.   "'降冪
+    LS_SORT-UP        = 'X'.    "升冪
+    APPEND LS_SORT TO GT_SORT.  CLEAR LS_SORT.
+
+
+
+ENDFORM.                    " BU_SORT
+*&---------------------------------------------------------------------*
+*&      Form  USER_COMMAND
+*&---------------------------------------------------------------------*
+FORM USER_COMMAND USING R_UCOMM     LIKE SY-UCOMM
+                        RS_SELFIELD TYPE SLIS_SELFIELD.
+  DATA: L_CHK TYPE C LENGTH 1.
+  DATA: LT_BDCDATA TYPE TABLE OF BDCDATA.
+  DATA: LS_OPT LIKE CTU_PARAMS.
+
+*  LS_OPT-DISMODE = 'E'.   "BDC Mode, (E/N/A)
+*  LS_OPT-DEFSIZE = 'X'.   "BDC Screen Size
+*
+*  CASE R_UCOMM.
+*    WHEN 'CLCK'.
+*      MESSAGE I001 WITH '可進行對應處理'.
+*
+*    WHEN'&IC1'.
+*      CHECK RS_SELFIELD-TABINDEX > 0.
+*      READ TABLE GT_DATA INDEX RS_SELFIELD-TABINDEX.
+*
+*      IF RS_SELFIELD-SEL_TAB_FIELD EQ 'GT_DATA-MATNR'.
+*        EXPORT GT_DATA-MATNR TO MEMORY ID 'MAT'.
+*        CALL TRANSACTION 'MM03' AND SKIP FIRST SCREEN.
+*
+*      ELSEIF RS_SELFIELD-SEL_TAB_FIELD EQ 'GT_DATA-WERKS'.
+**        LT_BDCDATA = VALUE #(
+**          ( PROGRAM  = 'RMMMBESTN' DYNPRO   = '1000' DYNBEGIN = 'X' )
+**          ( FNAM = 'MS_MATNR-LOW'       FVAL = GT_DATA-MATNR )
+**          ( FNAM = 'MS_WERKS-LOW'       FVAL = GT_DATA-WERKS )
+**          ( FNAM = 'BDC_OKCODE'         FVAL = '=ONLI' ) ).
+*
+*        CALL TRANSACTION 'MMBE' USING LT_BDCDATA OPTIONS FROM LS_OPT.
+*      ENDIF.
+*
+*  ENDCASE.
+*
+*  RS_SELFIELD-ROW_STABLE = 'X'.
+*  RS_SELFIELD-REFRESH = 'X'.
+
+ENDFORM.                    "USER_COMMAND
+
+*&------------------------------------------------
+
+*&---------------------------------------------------------------------*
+*&      Form  CHECK
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM CHECK .
+
+
+
+ENDFORM.                    " CHECK

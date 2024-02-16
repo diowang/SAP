@@ -1,0 +1,171 @@
+*&---------------------------------------------------------------------*
+*& Report  ZDIO_AS03
+*&
+*&---------------------------------------------------------------------*
+*&
+*&
+*&---------------------------------------------------------------------*
+
+REPORT  ZDIO_AS03.
+
+*&-----------------------------------------------------------------------
+*& DECLARE VAR.   宣告變量----STEP  1
+*&----------------------------------------------------------------------
+
+TABLES:  ANLA,  ANLZ.
+
+
+type-pools: slis.
+
+DATA: afield type slis_fieldcat_alv.
+DATA: fieldcat type slis_t_fieldcat_alv.
+DATA: c_user_command TYPE slis_formname VALUE 'USER_COMMAND'.
+
+
+DATA:BEGIN OF iTAB1 occurs 0,
+
+        ANLN1   LIKE  ANLA-ANLN1,     "固資
+        BUKRS   LIKE  ANLA-BUKRS,     "公司
+        TXT50   LIKE  ANLA-TXT50,     "品名
+        TXA50   LIKE  ANLA-TXA50,     "規格
+        KOSTL   LIKE  ANLZ-KOSTL,     "COST CENTER
+        STORT   LIKE  ANLZ-STORT,     "LOACTION
+        RAUMN   LIKE  ANLZ-RAUMN,     "ROOM
+
+
+     END OF iTAB1.
+
+
+
+
+*&-----------------------------------------------------------------------
+*& Macro for combine field.   定義ALV 的欄位名稱----STEP 2
+*&----------------------------------------------------------------------
+
+
+define add_field.
+       afield-col_pos = &1 .
+       afield-fieldname = &2.
+       afield-seltext_l = &3.
+       append afield to fieldcat.
+end-of-definition.
+
+
+
+*&-----------------------------------------------------------------------
+*& Select Option.   選取框----STEP 3
+*&----------------------------------------------------------------------
+
+
+SELECTION-SCREEN BEGIN OF BLOCK a1 WITH FRAME TITLE text-001.
+
+    SELECT-OPTIONS  S_ANLN1  FOR ANLA-ANLN1 .                                 "固資
+    SELECT-OPTIONS  S_BUKRS  FOR ANLA-BUKRS .                                 "公司
+
+SELECTION-SCREEN END OF BLOCK a1.
+
+*&-------------------------------------
+*& 開始執行 MAIN---STEP 4
+*&--------------------------------------
+START-OF-SELECTION.
+
+
+       PERFORM Process_DATA.
+
+       PERFORM ALV_Report.
+
+
+END-OF-SELECTION.
+*&---------------------------------------------------------------------*
+*&      Form  process_data---STEP 5  SQL COMMAND
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+*
+*   (1)
+*   (2)
+*   (3)
+*   (4)
+*   (5)
+
+FORM Process_DATA .
+************Declare Var
+  CLEAR: iTAB1 .
+  REFRESH: iTAB1.
+
+************************Get DATA
+  SELECT  ANLA~ANLN1  ANLA~BUKRS ANLA~TXT50  ANLA~TXA50
+          ANLZ~KOSTL ANLZ~STORT ANLZ~RAUMN
+          INTO CORRESPONDING FIELDS OF TABLE iTAB1
+          FROM ANLA inner join ANLZ on ANLA~ANLN1 = ANLZ~ANLN1
+          WHERE ANLA~ANLN1 in s_ANLN1 AND ANLA~BUKRS in s_BUKRS.
+
+
+
+ENDFORM.
+
+
+*-----------------------
+
+*&-----------------------------------------------------------------------
+*&  Display DATA.   STEP_6
+*&----------------------------------------------------------------------
+*&---------------------------------------------------------------------*
+*&      Form  ALV_REPORT FOR SUMMARY
+*&---------------------------------------------------------------------*
+*&       text
+*&----------------------------------------------------------------------*
+*&  -->  p1        text
+
+FORM ALV_Report .
+
+
+add_field:
+
+           1 'ANLN1' '資產編號',
+           2 'BUKRS' '公司',
+           3 'TXT50' '說明1',
+           4 'TXA50' '說明2',
+           5 'KOSTL' '成本中心',
+           6 'STORT' '儲位',
+           7 'RAUMN' '保管者'.
+
+
+******** CALL ALV FUNCTION
+  call function 'REUSE_ALV_GRID_DISPLAY'
+       exporting
+          i_buffer_active                   = space
+          i_callback_program                = sy-repid
+          i_callback_user_command           = c_user_command
+          it_fieldcat = fieldcat
+       tables
+          t_outtab    = iTab1.
+
+ENDFORM.                    " ALV_Report1
+
+**&------------------------------------------------------------------
+**&      Form  USER_COMMAND---STEP 7
+**&------------------------------------------------------------------
+
+FORM USER_COMMAND USING F_UCOMM LIKE SY-UCOMM
+                i_selfield TYPE SLIS_SELFIELD.
+
+  DATA: F_SUBRC LIKE SY-SUBRC,
+        s_ARSEG like itab1.
+  READ TABLE itab1 INDEX i_selfield-tabindex INTO s_ARSEG.
+
+    CASE F_UCOMM.
+        WHEN '&IC1'.          "Double Click
+                  CASE i_SELFIELD-FIELDNAME.
+                   WHEN 'ANLN1'.
+                         CHECK NOT S_ARSEG-ANLN1 IS INITIAL.
+                         SET PARAMETER ID 'MAT' FIELD S_ARSEG-ANLN1.
+                         CALL TRANSACTION 'AS03' AND SKIP FIRST SCREEN.
+
+              ENDCASE.
+
+        ENDCASE.
+ENDFORM.
